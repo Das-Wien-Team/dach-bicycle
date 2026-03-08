@@ -53,12 +53,31 @@ public class BicycleRouter {
             
             // Ignoriere Autobahnen und reine Fußwege (vereinfacht)
             String hw = way.get("highway");
-            if (hw == null || hw.equals("motorway") || hw.equals("steps")) continue;
+            if (hw == null || hw.equals("motorway") || hw.equals("steps") || hw.equals("footway")) continue;
 
-            // Fahrradwege (cycleway) sind "billiger", Hauptstraßen (primary) sind "teurer"
+            // Fahrradwege sind "billiger", Hauptstraßen sind "teurer"
             double penalty = 1.0;
-            if ("cycleway".equals(hw)) penalty = 0.5; // Halbe Kosten = Bevorzugt!
-            if ("primary".equals(hw)) penalty = 3.0;  // Dreifache Kosten = Vermeiden!
+            if ("cycleway".equals(hw) || "path".equals(hw)) penalty = 0.5; 
+            if ("primary".equals(hw)) penalty = 3.0;  
+
+            // EINBAHN-LOGIK (Route 3)
+            String oneway = way.get("oneway");
+            String onewayBike = way.get("oneway:bicycle");
+            String junction = way.get("junction");
+
+            // Ist es generell eine Einbahnstraße? (auch Kreisverkehre sind Einbahnen)
+            boolean isOneway = "yes".equals(oneway) || "1".equals(oneway) || "true".equals(oneway) || "roundabout".equals(junction);
+            boolean isReverseOneway = "-1".equals(oneway);
+
+            // Ausnahme: Sind Radfahrer in beide Richtungen erlaubt?
+            if ("no".equals(onewayBike) || "false".equals(onewayBike) || "0".equals(onewayBike)) {
+                isOneway = false;
+                isReverseOneway = false;
+            }
+            // Explizite Fahrrad-Einbahnstraße?
+            if ("yes".equals(onewayBike)) {
+                isOneway = true;
+            }
 
             List<Node> nodes = way.getNodes();
             for (int i = 0; i < nodes.size() - 1; i++) {
@@ -72,9 +91,16 @@ public class BicycleRouter {
                 graph.putIfAbsent(n1, new ArrayList<>());
                 graph.putIfAbsent(n2, new ArrayList<>());
 
-                // Graph ist bidirektional (wir ignorieren oneway für den Moment)
-                graph.get(n1).add(new Edge(n2, way, dist));
-                graph.get(n2).add(new Edge(n1, way, dist));
+                // Graphen-Kanten je nach Erlaubnis setzen!
+                // Vorwärts (von n1 nach n2) ist erlaubt, wenn es KEINE umgekehrte Einbahn ist
+                if (!isReverseOneway) {
+                    graph.get(n1).add(new Edge(n2, way, dist));
+                }
+                
+                // Rückwärts (von n2 nach n1) ist erlaubt, wenn es KEINE normale Einbahn ist
+                if (!isOneway) {
+                    graph.get(n2).add(new Edge(n1, way, dist));
+                }
             }
         }
         return graph;
