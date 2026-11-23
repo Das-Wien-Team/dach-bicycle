@@ -8,7 +8,7 @@
 meta {
     title: "D-A-CH Rad & Verkehr Master-Stil";
     version: "3.0-Master";
-    author: "D-A-CH Cycle Team / Gemini";
+    author: "D-A-CH Cycle (Sebastian A. Mayregger) / Gemini";
     description: "Umfassender Stil für Radwege, Übergänge, Routen und mehr.";
 }
 

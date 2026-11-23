@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geodäsie Kiosk - TU Wien</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            margin: 0; padding: 0; background-color: #0f172a; color: #f8fafc;
+            font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden;
+            cursor: pointer; user-select: none;
+        }
+        #container { display: flex; height: 100vh; width: 100vw; align-items: center; }
+        #text-panel { flex: 1; padding: 4rem; z-index: 10; }
+        #visual-panel { flex: 1; display: flex; justify-content: center; align-items: center; position: relative; }
+        
+        h1 { font-size: 3rem; color: #38bdf8; margin-bottom: 0.5rem; }
+        h2 { font-size: 1.5rem; color: #a8b2d1; font-weight: 400; margin-top: 0; text-transform: uppercase; letter-spacing: 2px; }
+        p { font-size: 1.2rem; line-height: 1.6; color: #cbd5e1; }
+        .formula { font-family: monospace; background: #1e293b; padding: 10px; border-radius: 5px; display: inline-block; color: #facc15; }
+        
+        .instruction { position: absolute; bottom: 2rem; left: 4rem; color: #64748b; font-size: 1rem; transition: opacity 0.5s; }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        
+        #screensaver-badge {
+            position: absolute; top: 2rem; right: 2rem; background: rgba(56, 189, 248, 0.2);
+            color: #38bdf8; padding: 0.5rem 1rem; border-radius: 20px; font-size: 0.9rem;
+            opacity: 0; transition: opacity 0.5s; border: 1px solid #38bdf8;
+        }
+
+        /* SVG Styling */
+        .graticule { fill: none; stroke: #38bdf8; stroke-width: 1px; stroke-opacity: 0.5; }
+        .sphere { fill: #1e293b; stroke: #38bdf8; stroke-width: 2px; }
+        .pixel { transition: fill 1s ease-in-out; stroke: #0f172a; stroke-width: 1px; }
+    </style>
+</head>
+<body>
+
+    <div id="screensaver-badge">Autoplay Aktiv - Bitte tippen</div>
+
+    <div id="container">
+        <div id="text-panel">
+            <h2 id="category">Kategorie</h2>
+            <h1 id="title">Titel</h1>
+            <p id="description">Beschreibungstext</p>
+            <div id="extra-info" style="display:none; margin-top: 20px;"></div>
+        </div>
+        <div id="visual-panel">
+            <svg width="600" height="600" id="canvas">
+                <g id="map-group" transform="translate(300, 300)"></g>
+                <g id="rs-group" transform="translate(100, 100)" opacity="0"></g>
+            </svg>
+        </div>
+    </div>
+    <div class="instruction pulse" id="instruction-text">Klicke irgendwo, um fortzufahren ➔</div>
+
+    <script>
+        // --- 1. SETUP KARTENPROJEKTIONEN ---
+        const mapGroup = d3.select("#map-group");
+        const graticule = d3.geoGraticule10();
+        const sphere = {type: "Sphere"};
+        
+        // --- 2. SETUP FERNERKUNDUNG (Pixel Grid) ---
+        const rsGroup = d3.select("#rs-group");
+        const gridSize = 15; const pxSize = 25;
+        const pixels = [];
+        
+        // Landschaft generieren (Wasser unten, Stadt in der Mitte, Wald drumherum)
+        for(let y=0; y<gridSize; y++) {
+            for(let x=0; x<gridSize; x++) {
+                let type = 'forest';
+                if(y > 10) type = 'water'; // See unten
+                else if(x > 5 && x < 10 && y > 3 && y < 8) type = 'city'; // Stadtzentrum
+                else if(x > 4 && x < 11 && y > 2 && y < 9 && Math.random() > 0.3) type = 'city'; // Vorstadt
+                pixels.push({x, y, type});
+            }
+        }
+
+        // Pixel ins SVG zeichnen
+        rsGroup.selectAll("rect")
+            .data(pixels)
+            .enter().append("rect")
+            .attr("class", "pixel")
+            .attr("x", d => d.x * pxSize)
+            .attr("y", d => d.y * pxSize)
+            .attr("width", pxSize).attr("height", pxSize)
+            .attr("fill", "#1e293b");
+
+        // Farben für die Fernerkundungs-Räume definieren
+        const rsColors = {
+            'true-color': { water: '#0284c7', city: '#94a3b8', forest: '#166534' },
+            'false-color': { water: '#000000', city: '#cbd5e1', forest: '#dc2626' }, // Wald wird Rot!
+            'ndvi': { water: '#ffffff', city: '#fef08a', forest: '#14532d' } // Indexwerte als Heatmap
+        };
+
+        // --- 3. DIE SZENEN DEFINIEREN ---
+        const stages = [
+            {
+                cat: "Teil 1: Kartenprojektion",
+                title: "Die 3D Erde (Orthografisch)",
+                desc: "Unsere Erde ist ein 3D-Körper. Die Satellitenansicht aus dem All (orthografische Projektion) ist visuell korrekt, aber man sieht immer nur die halbe Welt.",
+                visual: "map",
+                proj: d3.geoOrthographic().scale(250).translate([0, 0]),
+                extra: ""
+            },
+            {
+                cat: "Teil 1: Kartenprojektion",
+                title: "Die Mercator-Projektion",
+                desc: "Die berühmteste Karte der Welt! Sie ist winkeltreu, was sie perfekt für die Seefahrt machte. Aber schau dir die Verzerrung der Quadrate (Gradnetz) an den Polen an! Grönland wirkt gigantisch, ist aber in echt viel kleiner als Afrika. Geodät:innen berechnen diese mathematischen Verzerrungen.",
+                visual: "map",
+                proj: d3.geoMercator().scale(80).translate([0, 0]),
+                extra: ""
+            },
+            {
+                cat: "Teil 2: Fernerkundung",
+                title: "Das Echtfarbenbild (RGB)",
+                desc: "Jetzt zoomen wir rein! Ein Satellitenbild im sichtbaren Licht. Wälder sind grün, Städte grau, Wasser blau. Genau so, wie das menschliche Auge (oder eine normale Handykamera) die Landschaft sieht.",
+                visual: "rs",
+                colorMode: "true-color",
+                extra: ""
+            },
+            {
+                cat: "Teil 2: Fernerkundung",
+                title: "Falschfarben Infrarot (NIR)",
+                desc: "Geodätische Satelliten haben Sensoren für Nahes Infrarot (NIR). Pflanzen reflektieren Infrarot extrem stark. In dieser Falschfarbendarstellung leuchtet gesunder Wald plötzlich knallrot. Wasser absorbiert Infrarot und wird pechschwarz.",
+                visual: "rs",
+                colorMode: "false-color",
+                extra: ""
+            },
+            {
+                cat: "Teil 2: Fernerkundung",
+                title: "Datenanalyse: Der NDVI",
+                desc: "Geodäsie ist Data Science. Wir nehmen die roten und infraroten Pixel und berechnen einen Vegetationsindex. So messen wir aus 800 km Höhe auf den Quadratmeter genau, wie stark ein Wald unter Dürre leidet.",
+                visual: "rs",
+                colorMode: "ndvi",
+                extra: "<div class='formula'>NDVI = (NIR - Rot) / (NIR + Rot)</div>"
+            }
+        ];
+
+        let currentStage = 0;
+
+        function updateScene() {
+            const stage = stages[currentStage];
+            
+            // Text updaten
+            document.getElementById("category").innerText = stage.cat;
+            document.getElementById("title").innerText = stage.title;
+            document.getElementById("description").innerText = stage.desc;
+            
+            const extra = document.getElementById("extra-info");
+            extra.innerHTML = stage.extra;
+            extra.style.display = stage.extra ? "block" : "none";
+
+            // Visuellen Wechsel animieren
+            if (stage.visual === "map") {
+                rsGroup.transition().duration(500).attr("opacity", 0);
+                mapGroup.transition().duration(500).attr("opacity", 1);
+                
+                const path = d3.geoPath().projection(stage.proj);
+                
+                // Globus-Hülle (Sphere) und Gradnetz updaten
+                const pathSelect = mapGroup.selectAll("path").data([sphere, graticule]);
+                pathSelect.enter().append("path")
+                    .attr("class", (d, i) => i === 0 ? "sphere" : "graticule")
+                    .merge(pathSelect)
+                    .transition().duration(1500).ease(d3.easeCubicInOut)
+                    .attr("d", path);
+
+            } else if (stage.visual === "rs") {
+                mapGroup.transition().duration(500).attr("opacity", 0);
+                rsGroup.transition().duration(500).attr("opacity", 1);
+                
+                // Pixelfarben je nach Fernerkundungs-Modus weich überblenden
+                rsGroup.selectAll(".pixel")
+                    .transition().duration(1000)
+                    .attr("fill", d => rsColors[stage.colorMode][d.type]);
+            }
+        }
+
+        // --- AUTOPLAY / SCREENSAVER LOGIK ---
+        let idleTimer; let autoPlayInterval;
+        const IDLE_TIME = 15000; const AUTOPLAY_SPEED = 5000;
+
+        function startAutoPlay() {
+            document.getElementById("screensaver-badge").style.opacity = "1";
+            document.getElementById("instruction-text").style.opacity = "0";
+            nextStage();
+            autoPlayInterval = setInterval(nextStage, AUTOPLAY_SPEED);
+        }
+
+        function resetTimers() {
+            clearTimeout(idleTimer); clearInterval(autoPlayInterval);
+            document.getElementById("screensaver-badge").style.opacity = "0";
+            document.getElementById("instruction-text").style.opacity = "1";
+            idleTimer = setTimeout(startAutoPlay, IDLE_TIME);
+        }
+
+        function nextStage() {
+            currentStage = (currentStage + 1) % stages.length;
+            updateScene();
+        }
+
+        // Init
+        document.body.addEventListener("click", () => { nextStage(); resetTimers(); });
+        updateScene();
+        resetTimers();
+
+    </script>
+</body>
+</html>
